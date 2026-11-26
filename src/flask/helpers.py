@@ -13,6 +13,7 @@ from werkzeug.exceptions import abort as _wz_abort
 from werkzeug.utils import redirect as _wz_redirect
 from werkzeug.wrappers import Response as BaseResponse
 
+from .globals import _cv_app
 from .globals import _cv_request
 from .globals import current_app
 from .globals import request
@@ -111,27 +112,54 @@ def stream_with_context(
         return update_wrapper(decorator, generator_or_function)  # type: ignore[arg-type]
 
     def generator() -> t.Iterator[t.AnyStr]:
-        if _cv_request.get(None) is None:
+        ctx = _cv_request.get(None)
+        app_ctx = _cv_app.get(None)
+
+        if ctx is None:
             raise RuntimeError(
                 "'stream_with_context' can only be used when a request"
                 " context is active, such as in a view function."
             )
 
-        # Setup code below will run the generator to this point, so that the
-        # current contexts are recorded. The contexts must be pushed after,
-        # otherwise their ContextVar will record the wrong event loop during
-        # async view functions.
+        req_ctx = ctx
+
+        def run(step: t.Callable[[], t.Any]) -> t.Any:
+            # Bind the contexts only while the wrapped generator is running.
+            # Pushing them would conflict with contexts preserved by the test
+            # client, which may be pushed after this stream starts and popped
+            # before it is closed.
+            token = _cv_request.set(req_ctx)
+            app_token = None if app_ctx is None else _cv_app.set(app_ctx)
+
+            try:
+                return step()
+            finally:
+                if app_token is not None:
+                    _cv_app.reset(app_token)
+
+                _cv_request.reset(token)
+
+        # The code above runs when the generator is first advanced, recording
+        # the contexts while the request context is still active. They must be
+        # bound later, otherwise their ContextVar will record the wrong event
+        # loop during async view functions.
         yield None  # type: ignore[misc]
 
         try:
-            yield from gen
+            while True:
+                try:
+                    value = run(lambda: next(gen))
+                except StopIteration:
+                    return
+
+                yield value
         finally:
             # Clean up in case the user wrapped a WSGI iterator.
             if hasattr(gen, "close"):
-                gen.close()
+                run(gen.close)
 
     # Execute the generator to the sentinel value. This ensures the context is
-    # preserved in the generator's state. Further iteration will push the
+    # preserved in the generator's state. Further iteration will bind the
     # context and yield from the original iterator.
     wrapped_g = generator()
     next(wrapped_g)
@@ -564,9 +592,6 @@ def send_from_directory(
 
     .. versionadded:: 0.5
     """
-    if "conditional" not in kwargs:
-        kwargs["conditional"] = False
-
     return werkzeug.utils.send_from_directory(  # type: ignore[return-value]
         directory, path, **_prepare_send_file_kwargs(**kwargs)
     )
