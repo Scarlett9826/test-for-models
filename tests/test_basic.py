@@ -358,6 +358,19 @@ def test_session_using_samesite_attribute(app, client):
     assert "samesite=lax" in cookie
 
 
+@pytest.mark.parametrize("samesite", ["Strict", "Lax"])
+def test_session_cookie_httponly_with_samesite(app, client, samesite):
+    @app.route("/")
+    def index():
+        flask.session["testing"] = 42
+        return "Hello World"
+
+    app.config.update(SESSION_COOKIE_SAMESITE=samesite)
+    cookie = client.get("/").headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert f"samesite={samesite.lower()}" in cookie
+
+
 def test_missing_session(app):
     app.secret_key = None
 

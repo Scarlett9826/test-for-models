@@ -98,6 +98,39 @@ class TestSendfile:
         assert rv.data.strip() == b"Hello Subdomain"
         rv.close()
 
+    @pytest.mark.parametrize("path", ["/static/index.html", "/download"])
+    def test_conditional_and_range(self, app, client, path):
+        @app.route("/download")
+        def download():
+            return flask.send_from_directory("static", "index.html")
+
+        file_size = os.path.getsize(
+            os.path.join(os.path.dirname(__file__), "static", "index.html")
+        )
+        rv = client.get(path)
+        status = rv.status_code
+        etag = rv.headers.get("ETag")
+        rv.close()
+        assert status == 200
+        assert etag is not None
+
+        rv = client.get(path, headers={"If-None-Match": etag})
+        status = rv.status_code
+        data = rv.data
+        rv.close()
+        assert status == 304
+        assert data == b""
+
+        rv = client.get(path, headers={"Range": "bytes=0-3"})
+        status = rv.status_code
+        headers = rv.headers
+        data = rv.data
+        rv.close()
+        assert status == 206
+        assert headers["Accept-Ranges"] == "bytes"
+        assert headers["Content-Range"] == f"bytes 0-3/{file_size}"
+        assert data == b"<h1>"
+
 
 class TestUrlFor:
     def test_url_for_with_anchor(self, app, req_ctx):
