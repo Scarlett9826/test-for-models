@@ -98,6 +98,33 @@ class TestSendfile:
         assert rv.data.strip() == b"Hello Subdomain"
         rv.close()
 
+    def test_conditional_and_range_negotiation(self, app, client):
+        @app.route("/download")
+        def download():
+            return flask.send_from_directory("static", "index.html")
+
+        @app.route("/direct")
+        def direct():
+            return flask.send_file("static/index.html")
+
+        for url in ("/static/index.html", "/download", "/direct"):
+            rv = client.get(url)
+            assert rv.status_code == 200
+            assert rv.data == b"<h1>Hello World!</h1>\n"
+            etag = rv.headers["ETag"]
+            rv.close()
+
+            rv = client.get(url, headers={"If-None-Match": etag})
+            assert rv.status_code == 304
+            rv.close()
+
+            rv = client.get(url, headers={"Range": "bytes=0-4"})
+            assert rv.status_code == 206
+            assert rv.headers["Accept-Ranges"] == "bytes"
+            assert rv.headers["Content-Range"] == "bytes 0-4/22"
+            assert rv.data == b"<h1>H"
+            rv.close()
+
 
 class TestUrlFor:
     def test_url_for_with_anchor(self, app, req_ctx):
@@ -246,6 +273,23 @@ class TestStreaming:
 
         rv = client.get("/?name=World")
         assert rv.data == b"Hello World!"
+
+    def test_streaming_with_context_reads_context_after_first_chunk(self, app, client):
+        @app.route("/")
+        def index():
+            flask.g.name = flask.request.args["name"]
+
+            def generate():
+                yield "Hello "
+                yield flask.g.name
+                yield " "
+                yield flask.request.args["name"]
+                yield "!"
+
+            return flask.Response(flask.stream_with_context(generate()))
+
+        rv = client.get("/?name=World")
+        assert rv.data == b"Hello World World!"
 
     def test_streaming_with_context_as_decorator(self, app, client):
         @app.route("/")

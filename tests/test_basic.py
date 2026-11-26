@@ -358,6 +358,21 @@ def test_session_using_samesite_attribute(app, client):
     assert "samesite=lax" in cookie
 
 
+def test_session_cookie_httponly_with_samesite(app, client):
+    @app.route("/")
+    def index():
+        flask.session["testing"] = 42
+        return "Hello World"
+
+    for samesite in ("Lax", "Strict"):
+        app.config.update(SESSION_COOKIE_SAMESITE=samesite)
+        rv = client.get("/")
+        cookie = rv.headers["set-cookie"].lower()
+        assert f"samesite={samesite.lower()}" in cookie
+        assert "httponly" in cookie
+        rv.close()
+
+
 def test_missing_session(app):
     app.secret_key = None
 
@@ -862,6 +877,31 @@ def test_before_after_request_order(app, client):
     rv = client.get("/")
     assert rv.data == b"42"
     assert called == [1, 2, 3, 4, 5, 6]
+
+
+def test_after_request_reverse_order(app, client):
+    called = []
+
+    @app.after_request
+    def first(response):
+        called.append(1)
+        response.headers["X-Value"] = "first"
+        return response
+
+    @app.after_request
+    def second(response):
+        called.append(2)
+        response.headers["X-Value"] = "second"
+        return response
+
+    @app.route("/")
+    def index():
+        return "42"
+
+    rv = client.get("/")
+    assert rv.data == b"42"
+    assert called == [2, 1]
+    assert rv.headers["X-Value"] == "first"
 
 
 def test_error_handling(app, client):
