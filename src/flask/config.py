@@ -180,7 +180,7 @@ class Config(dict):  # type: ignore[type-arg]
 
                 current = current[part]
 
-            current.setdefault(tail, value)
+            current[tail] = value
 
         return True
 
