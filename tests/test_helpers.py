@@ -247,6 +247,21 @@ class TestStreaming:
         rv = client.get("/?name=World")
         assert rv.data == b"Hello World!"
 
+    def test_streaming_request_context_after_first_yield(self, app, client):
+        @app.route("/")
+        def index():
+            def generate():
+                yield "first"
+                yield flask.request.args["name"]
+
+            return flask.Response(flask.stream_with_context(generate()))
+
+        rv = client.get("/?name=second", buffered=False)
+        stream = iter(rv.response)
+        assert next(stream) == b"first"
+        assert b"".join(stream) == b"second"
+        rv.close()
+
     def test_streaming_with_context_as_decorator(self, app, client):
         @app.route("/")
         def index():

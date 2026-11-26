@@ -358,6 +358,24 @@ def test_session_using_samesite_attribute(app, client):
     assert "samesite=lax" in cookie
 
 
+@pytest.mark.parametrize("samesite", ["Lax", "Strict"])
+def test_session_samesite_keeps_httponly(app, client, samesite):
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE=samesite,
+    )
+
+    @app.route("/")
+    def index():
+        flask.session["testing"] = 42
+        return "Hello World"
+
+    rv = client.get("/")
+    cookie = rv.headers["set-cookie"].lower()
+    assert "httponly" in cookie
+    assert f"samesite={samesite.lower()}" in cookie
+
+
 def test_missing_session(app):
     app.secret_key = None
 
@@ -862,6 +880,30 @@ def test_before_after_request_order(app, client):
     rv = client.get("/")
     assert rv.data == b"42"
     assert called == [1, 2, 3, 4, 5, 6]
+
+
+def test_after_request_reverse_registration_order(app, client):
+    called = []
+
+    @app.after_request
+    def after1(response):
+        called.append("first")
+        response.headers["X-Order"] = "first"
+        return response
+
+    @app.after_request
+    def after2(response):
+        called.append("second")
+        response.headers["X-Order"] = "second"
+        return response
+
+    @app.route("/")
+    def index():
+        return "42"
+
+    rv = client.get("/")
+    assert called == ["second", "first"]
+    assert rv.headers["X-Order"] == "first"
 
 
 def test_error_handling(app, client):
@@ -1406,6 +1448,29 @@ def test_static_files(app, client):
     assert rv.data.strip() == b"<h1>Hello World!</h1>"
     with app.test_request_context():
         assert flask.url_for("static", filename="index.html") == "/static/index.html"
+    rv.close()
+
+
+@pytest.mark.parametrize("path", ["/static/index.html", "/download"])
+def test_static_and_download_conditional_requests(app, client, path):
+    @app.route("/download")
+    def download():
+        return flask.send_from_directory(app.static_folder, "index.html")
+
+    rv = client.get(path)
+    assert rv.status_code == 200
+    etag = rv.headers["ETag"]
+    rv.close()
+
+    rv = client.get(path, headers={"If-None-Match": etag})
+    assert rv.status_code == 304
+    assert rv.data == b""
+    rv.close()
+
+    rv = client.get(path, headers={"Range": "bytes=0-3"})
+    assert rv.status_code == 206
+    assert rv.headers["Accept-Ranges"] == "bytes"
+    assert rv.data == b"<h1>"
     rv.close()
 
 
