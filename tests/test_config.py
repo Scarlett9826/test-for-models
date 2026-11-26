@@ -107,6 +107,16 @@ def test_from_prefixed_env_nested(monkeypatch):
     assert app.config["NEW"] == {"K": "v"}
 
 
+def test_from_prefixed_env_nested_overrides_existing(monkeypatch):
+    monkeypatch.setenv("FLASK_EXIST__OK", "other")
+
+    app = flask.Flask(__name__)
+    app.config["EXIST"] = {"OK": "value", "flag": True}
+    app.config.from_prefixed_env()
+
+    assert app.config["EXIST"] == {"OK": "other", "flag": True}
+
+
 def test_config_from_mapping():
     app = flask.Flask(__name__)
     app.config.from_mapping({"SECRET_KEY": "config", "TEST_KEY": "foo"})

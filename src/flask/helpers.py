@@ -13,6 +13,7 @@ from werkzeug.exceptions import abort as _wz_abort
 from werkzeug.utils import redirect as _wz_redirect
 from werkzeug.wrappers import Response as BaseResponse
 
+from .globals import _cv_app
 from .globals import _cv_request
 from .globals import current_app
 from .globals import request
@@ -121,14 +122,17 @@ def stream_with_context(
         # current contexts are recorded. The contexts must be pushed after,
         # otherwise their ContextVar will record the wrong event loop during
         # async view functions.
+        app_ctx = _cv_app.get()
+        ctx = _cv_request.get()
         yield None  # type: ignore[misc]
 
-        try:
-            yield from gen
-        finally:
-            # Clean up in case the user wrapped a WSGI iterator.
-            if hasattr(gen, "close"):
-                gen.close()
+        with app_ctx, ctx:
+            try:
+                yield from gen
+            finally:
+                # Clean up in case the user wrapped a WSGI iterator.
+                if hasattr(gen, "close"):
+                    gen.close()
 
     # Execute the generator to the sentinel value. This ensures the context is
     # preserved in the generator's state. Further iteration will push the
@@ -565,7 +569,7 @@ def send_from_directory(
     .. versionadded:: 0.5
     """
     if "conditional" not in kwargs:
-        kwargs["conditional"] = False
+        kwargs["conditional"] = True
 
     return werkzeug.utils.send_from_directory(  # type: ignore[return-value]
         directory, path, **_prepare_send_file_kwargs(**kwargs)
