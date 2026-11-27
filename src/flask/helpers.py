@@ -13,6 +13,7 @@ from werkzeug.exceptions import abort as _wz_abort
 from werkzeug.utils import redirect as _wz_redirect
 from werkzeug.wrappers import Response as BaseResponse
 
+from .globals import _cv_app
 from .globals import _cv_request
 from .globals import current_app
 from .globals import request
@@ -111,11 +112,17 @@ def stream_with_context(
         return update_wrapper(decorator, generator_or_function)  # type: ignore[arg-type]
 
     def generator() -> t.Iterator[t.AnyStr]:
-        if _cv_request.get(None) is None:
+        ctx = _cv_request.get(None)
+
+        if ctx is None:
             raise RuntimeError(
                 "'stream_with_context' can only be used when a request"
                 " context is active, such as in a view function."
             )
+
+        # Record the contexts while they are still active.
+        app_ctx = _cv_app.get()
+        req_ctx = ctx
 
         # Setup code below will run the generator to this point, so that the
         # current contexts are recorded. The contexts must be pushed after,
@@ -123,15 +130,19 @@ def stream_with_context(
         # async view functions.
         yield None  # type: ignore[misc]
 
-        try:
-            yield from gen
-        finally:
-            # Clean up in case the user wrapped a WSGI iterator.
-            if hasattr(gen, "close"):
-                gen.close()
+        # The request context has typically ended by the time the generator
+        # is iterated. Push the recorded contexts while running the wrapped
+        # generator, and pop them when it finishes or is closed.
+        with app_ctx, req_ctx:
+            try:
+                yield from gen
+            finally:
+                # Clean up in case the user wrapped a WSGI iterator.
+                if hasattr(gen, "close"):
+                    gen.close()
 
     # Execute the generator to the sentinel value. This ensures the context is
-    # preserved in the generator's state. Further iteration will push the
+    # recorded in the generator's state. Further iteration will push the
     # context and yield from the original iterator.
     wrapped_g = generator()
     next(wrapped_g)
