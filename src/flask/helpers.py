@@ -564,8 +564,9 @@ def send_from_directory(
 
     .. versionadded:: 0.5
     """
+    # Enable conditional and range requests unless the caller disabled them.
     if "conditional" not in kwargs:
-        kwargs["conditional"] = False
+        kwargs["conditional"] = True
 
     return werkzeug.utils.send_from_directory(  # type: ignore[return-value]
         directory, path, **_prepare_send_file_kwargs(**kwargs)
