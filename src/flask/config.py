@@ -180,7 +180,8 @@ class Config(dict):  # type: ignore[type-arg]
 
                 current = current[part]
 
-            current.setdefault(tail, value)
+            # Set the value, replacing any existing value for the key.
+            current[tail] = value
 
         return True
 

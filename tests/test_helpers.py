@@ -98,6 +98,60 @@ class TestSendfile:
         assert rv.data.strip() == b"Hello Subdomain"
         rv.close()
 
+    @pytest.mark.parametrize("conditional", [None, True])
+    def test_send_from_directory_conditional(self, app, client, conditional):
+        kwargs = {} if conditional is None else {"conditional": conditional}
+
+        @app.route("/")
+        def index():
+            return flask.send_from_directory(
+                os.path.dirname(__file__), "static/index.html", **kwargs
+            )
+
+        rv = client.get("/")
+        assert rv.status_code == 200
+        etag = rv.headers["ETag"]
+        rv.close()
+
+        rv = client.get("/", headers={"If-None-Match": etag})
+        assert rv.status_code == 304
+        rv.close()
+
+        rv = client.get("/", headers={"Range": "bytes=0-4"})
+        assert rv.status_code == 206
+        assert rv.data == b"<h1>H"
+        assert rv.accept_ranges == "bytes"
+        rv.close()
+
+    def test_send_from_directory_conditional_disabled(self, app, client):
+        # An explicit False is still respected.
+        @app.route("/")
+        def index():
+            return flask.send_from_directory(
+                os.path.dirname(__file__), "static/index.html", conditional=False
+            )
+
+        rv = client.get("/", headers={"Range": "bytes=0-4"})
+        assert rv.status_code == 200
+        assert rv.data.strip() == b"<h1>Hello World!</h1>"
+        assert rv.accept_ranges is None
+        rv.close()
+
+    def test_streaming_with_context_pops_context(self, app, client):
+        # Iterating the stream pushes the recorded contexts only while
+        # the generator is running, and pops them again afterwards.
+        with app.test_request_context("/"):
+            wrapped = flask.stream_with_context(iter(["a", "b"]))
+
+        assert not flask.has_request_context()
+        assert next(wrapped) == "a"
+        assert flask.has_request_context()
+        assert next(wrapped) == "b"
+        assert flask.has_request_context()
+        with pytest.raises(StopIteration):
+            next(wrapped)
+        assert not flask.has_request_context()
+
 
 class TestUrlFor:
     def test_url_for_with_anchor(self, app, req_ctx):

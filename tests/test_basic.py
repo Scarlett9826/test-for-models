@@ -358,6 +358,36 @@ def test_session_using_samesite_attribute(app, client):
     assert "samesite=lax" in cookie
 
 
+@pytest.mark.parametrize("samesite", ["Lax", "Strict"])
+def test_session_samesite_keeps_httponly(app, client, samesite):
+    # Setting SameSite must not drop the HttpOnly attribute, which is
+    # controlled independently by SESSION_COOKIE_HTTPONLY.
+    @app.route("/")
+    def index():
+        flask.session["testing"] = 42
+        return "Hello World"
+
+    @app.route("/clear")
+    def clear():
+        flask.session.clear()
+        return "Goodbye World"
+
+    app.config.update(SESSION_COOKIE_SAMESITE=samesite)
+
+    for path in ("/", "/clear"):
+        rv = client.get(path)
+        cookie = rv.headers["set-cookie"].lower()
+        assert f"samesite={samesite.lower()}" in cookie
+        assert "httponly" in cookie
+
+    # HttpOnly is still controlled by its own setting.
+    app.config.update(SESSION_COOKIE_HTTPONLY=False)
+    rv = client.get("/")
+    cookie = rv.headers["set-cookie"].lower()
+    assert f"samesite={samesite.lower()}" in cookie
+    assert "httponly" not in cookie
+
+
 def test_missing_session(app):
     app.secret_key = None
 
@@ -862,6 +892,74 @@ def test_before_after_request_order(app, client):
     rv = client.get("/")
     assert rv.data == b"42"
     assert called == [1, 2, 3, 4, 5, 6]
+
+
+def test_after_request_reverse_registration_order(app, client):
+    # after_request functions run in reverse order of registration, so
+    # the last registered function sees the response first.
+    @app.after_request
+    def first(response):
+        response.headers["X-Order"] = "first"
+        return response
+
+    @app.after_request
+    def last(response):
+        # Runs before "first", whose header value then wins.
+        assert "X-Order" not in response.headers
+        response.headers["X-Order"] = "last"
+        return response
+
+    @app.route("/")
+    def index():
+        return "42"
+
+    rv = client.get("/")
+    assert rv.headers["X-Order"] == "first"
+
+
+def test_after_request_reverse_registration_order_blueprint(app, client):
+    bp = flask.Blueprint("bp", __name__)
+
+    @bp.after_request
+    def first(response):
+        response.headers["X-Order"] = "first"
+        return response
+
+    @bp.after_request
+    def last(response):
+        assert "X-Order" not in response.headers
+        response.headers["X-Order"] = "last"
+        return response
+
+    @bp.route("/")
+    def index():
+        return "42"
+
+    app.register_blueprint(bp)
+    rv = client.get("/")
+    assert rv.headers["X-Order"] == "first"
+
+
+def test_static_files_conditional(app, client):
+    rv = client.get("/static/index.html")
+    assert rv.status_code == 200
+    assert rv.cache_control.no_cache
+    assert "etag" in rv.headers
+    rv.close()
+
+    # A matching validator is revalidated instead of downloaded again.
+    rv = client.get("/static/index.html", headers={"If-None-Match": rv.headers["ETag"]})
+    assert rv.status_code == 304
+    assert rv.data == b""
+    rv.close()
+
+    # Range requests return partial content.
+    rv = client.get("/static/index.html", headers={"Range": "bytes=0-4"})
+    assert rv.status_code == 206
+    assert rv.data == b"<h1>H"
+    assert rv.accept_ranges == "bytes"
+    assert rv.content_range.units == "bytes"
+    rv.close()
 
 
 def test_error_handling(app, client):
