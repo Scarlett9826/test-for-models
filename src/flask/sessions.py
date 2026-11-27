@@ -359,9 +359,6 @@ class SecureCookieSessionInterface(SessionInterface):
         samesite = self.get_cookie_samesite(app)
         httponly = self.get_cookie_httponly(app)
 
-        if samesite is not None:
-            httponly = False
-
         # Add a "Vary: Cookie" header if the session was accessed at all.
         if session.accessed:
             response.vary.add("Cookie")
